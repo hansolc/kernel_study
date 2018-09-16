@@ -463,13 +463,38 @@ static int ext4_file_open(struct inode * inode, struct file * filp)
  * by calling generic_file_llseek_size() with the appropriate maxbytes
  * value for each.
  */
+
+/*
+ * block-mapped: - sector mapping 에서의 mapping table 의 크기를 줄여주기 위해 사용
+ * 				 - 같은 lsn(logical sector number)에 대해서 같은 write 발생 시 성능 저하 
+ *
+ * extent-mapped: - 연속 할당시 사용 
+ 				  - 선 할당으로 할당된 block 들이 충분하지 않을 때 또 다른 연속된 공간을 extent 단위로 할당.
+
+ * generic_file_llseek_size() 함수를 호출해 block 들에 대한 적당한 최대 크기를 정해 주는것 같음.
+ */
 loff_t ext4_llseek(struct file *file, loff_t offset, int whence)
 {
-	struct inode *inode = file->f_mapping->host;
-	loff_t maxbytes;
+	// 파라미터: 특정 파일, 위치, 위치(?)
+
+	struct inode *inode = file->f_mapping->host;		// inode를 통해 파일과 매핑되는 파일을 찾음
+	loff_t maxbytes;									// 최대 파일 크기 지정.
 
 	if (!(ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS)))
+		// ext4_test_inode_flag: fs/ext4/ext4.h 에 원형 정의
+		// 					   	 static inline int ext4_test_inode_flag(struct inode *inode, int bit)
+		//						
+		// EXT4_INODE_EXTENTS:   fs/ext4/ext4.h 에 emulator 정의
+								 // EXT4_INODE_EXTENTS = 19 : inode uses extents
+								 // flag 19: extents 사용을 파라미터로 받아 extents을 사용하는것 같다.
 		maxbytes = EXT4_SB(inode->i_sb)->s_bitmap_maxbytes;
+		/* fs/ext4/ext4.h(line 1499): function
+		*  --> inode을 파라미터로 받아 아이노드에 해당하는
+			   container_of(inode, struct ext4_inode_info, vfs_inode) 함수를 호출해 리턴한다.
+			   bitmap 에서 maxbytes 확인(?)
+		*  fs/ext4/ext4.h(line 1577): macro
+		*  
+		*/
 	else
 		maxbytes = inode->i_sb->s_maxbytes;
 
@@ -477,11 +502,22 @@ loff_t ext4_llseek(struct file *file, loff_t offset, int whence)
 	default:
 		return generic_file_llseek_size(file, offset, whence,
 						maxbytes, i_size_read(inode));
+		/* generic_file_llseek_size: fs/read_write.c: fuction | variable,	include/linux/fs.h: prototype
+		*  variable 선언 부분: EXPORT_SYMBOL(generic_file_llseek_size): 다른 modules에게 API 제공, 다른 모듈이 사용할 수 있게 하기위해
+		*  user가 whence 부분에 SEEK_END 혹은 SEEK_CUR 을 파라미터로 주면 디폴트로 가는것 같음.
+		*/
 	case SEEK_HOLE:
 		inode_lock_shared(inode);
 		offset = iomap_seek_hole(inode, offset, &ext4_iomap_ops);
 		inode_unlock_shared(inode);
 		break;
+		/* SEEK_HOLE: include/uapi/linux/fs.h: macro
+		*SEEK_CUR	1	* seek relative to current file position 
+		*SEEK_END	2	* seek relative to end of file 
+		*SEEK_DATA	3	* seek to the next data 
+		*SEEK_HOLE	4	* seek to the next hole 
+		*SEEK_MAX	SEEK_HOLE   		
+		*/
 	case SEEK_DATA:
 		inode_lock_shared(inode);
 		offset = iomap_seek_data(inode, offset, &ext4_iomap_ops);
@@ -495,7 +531,16 @@ loff_t ext4_llseek(struct file *file, loff_t offset, int whence)
 }
 
 const struct file_operations ext4_file_operations = {
-	.llseek		= ext4_llseek,
+	/*
+		file_operations
+		- 각 변수에 실제 연산을 수행하는 함수의 시작 주소를 등록해
+		  리눅스에선 각 file system 유형에 따라 서로 다른 파일 연산이
+		  구현 되므로 결국 파일 유형에 맞는 파일 연산을 진행할 수 있드록 f_op 변수에 등록
+	*/
+	.llseek		= ext4_llseek,		// kernel_analysis_1
+							 		// fs/ext4/ext4.h 에 원형이 등록 되어 있다. __kernel_loff_t -> long long
+									// fs/ext4/file.c -> line466 함수 정의
+
 	.read_iter	= ext4_file_read_iter,
 	.write_iter	= ext4_file_write_iter,
 	.unlocked_ioctl = ext4_ioctl,
