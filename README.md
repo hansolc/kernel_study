@@ -1,3 +1,2 @@
 # kernel_study
-	status test
-	test two
+	20180916: fs/ext4/file.c: file_operations->llseek analysis
