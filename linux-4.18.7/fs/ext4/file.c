@@ -478,7 +478,7 @@ loff_t ext4_llseek(struct file *file, loff_t offset, int whence)
 	// 파라미터: 특정 파일, 위치, 위치(?)
 
 	struct inode *inode = file->f_mapping->host;		// inode를 통해 파일과 매핑되는 파일을 찾음
-	loff_t maxbytes;									// 최대 파일 크기 지정.
+	loff_t maxbytes;									// 최대 파일 크기 저장할 변수 선언
 
 	if (!(ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS)))
 		// ext4_test_inode_flag: fs/ext4/ext4.h 에 원형 정의
@@ -489,10 +489,9 @@ loff_t ext4_llseek(struct file *file, loff_t offset, int whence)
 								 // flag 19: extents 사용을 파라미터로 받아 extents을 사용하는것 같다.
 		maxbytes = EXT4_SB(inode->i_sb)->s_bitmap_maxbytes;
 		/* fs/ext4/ext4.h(line 1499): function
-		*  --> inode을 파라미터로 받아 아이노드에 해당하는
-			   container_of(inode, struct ext4_inode_info, vfs_inode) 함수를 호출해 리턴한다.
-			   bitmap 에서 maxbytes 확인(?)
-		*  fs/ext4/ext4.h(line 1577): macro
+		*  --> inode superblock을 파라미터로 받아 아이노드에 해당하는
+		*	   sb-<s_fs_info를 리턴받아 해당하는 maxbytes을 변수에 저장한다.
+		*  
 		*  
 		*/
 	else
@@ -508,6 +507,13 @@ loff_t ext4_llseek(struct file *file, loff_t offset, int whence)
 		*/
 	case SEEK_HOLE:
 		inode_lock_shared(inode);
+		/* inode_lock_shared: include/linux/fs.h (function)
+		*  static inline void inode_lock_shared(struct inode *inode)
+		{	
+			down_read(&inode->i_rwsem);
+		}
+		down_read(): 읽기 동작동안 세마포어 잠금
+		*/
 		offset = iomap_seek_hole(inode, offset, &ext4_iomap_ops);
 		inode_unlock_shared(inode);
 		break;
@@ -518,16 +524,35 @@ loff_t ext4_llseek(struct file *file, loff_t offset, int whence)
 		*SEEK_HOLE	4	* seek to the next hole 
 		*SEEK_MAX	SEEK_HOLE   		
 		*/
+
+		/* description
+		*  file offset을 다음 hole 혹은 파라미터로 offset으로 설정
+		*  파라미터 offset동안 hole이 없다면 file 맨 끝에 hole을 설정.
+		*  regular file 임을 나타내기 위함. ex) '\0' null character
+		*  disk 공간 낭비를 줄이기 위함이다.
+		*/
 	case SEEK_DATA:
 		inode_lock_shared(inode);
 		offset = iomap_seek_data(inode, offset, &ext4_iomap_ops);
 		inode_unlock_shared(inode);
 		break;
+
+		/* description
+		*  file offset을 해당 file 위치나 보다 큰 곳으로 설정
+		*  만약 offset이 데이터를 가리킨 다면, 파라미터로 받은 offset이 offset으로 설정. 
+		*/
 	}
 
 	if (offset < 0)
 		return offset;
 	return vfs_setpos(file, offset, maxbytes);
+		/* vfs_setpos: fs/read_write.c (function)
+		*  file에 대해 파라미터로 받은 offset으로 변경하기 위한 함수
+		*  유효할 시: 특정 offset을 반환
+		*  비유효 시: -EINVAL 반환
+		*  EINVAL: /arch/powerpc/boot/stdio.h
+		*  #define	EINVAL		22	: Invalid argument
+		*/
 }
 
 const struct file_operations ext4_file_operations = {
